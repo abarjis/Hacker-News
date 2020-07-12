@@ -8,6 +8,12 @@ $(async function() {
   const $ownStories = $("#my-articles");
   const $navLogin = $("#nav-login");
   const $navLogOut = $("#nav-logout");
+  const $navSubmit = $("#nav-submit");
+  const $navUserProfile = $("#nav-user-profile");
+  const $userProfile = $("#user-profile");
+  const $body = $("body");
+  const $favoritedStories = $("#favorited-articles");
+  const $navWelcome = $("#nav-welcome");
 
   // global storyList variable
   let storyList = null;
@@ -46,9 +52,9 @@ $(async function() {
     evt.preventDefault(); // no page refresh
 
     // grab the required fields
-    let name = $("#create-account-name").val();
-    let username = $("#create-account-username").val();
-    let password = $("#create-account-password").val();
+    const name = $("#create-account-name").val();
+    const username = $("#create-account-username").val();
+    const password = $("#create-account-password").val();
 
     // call the create method, which calls the API and then builds a new user instance
     const newUser = await User.create(username, password, name);
@@ -68,6 +74,71 @@ $(async function() {
     location.reload();
   });
 
+  $submitForm.on("submit", async function(evt) {
+    evt.preventDefault();
+
+    // get all the info from the form
+    const title = $("#title").val();
+    const url = $("#url").val();
+    const hostName = getHostName(url);
+    const author = $("#author").val();
+    const username = currentUser.username;
+
+    const storyObject = await storyList.addStory(currentUser,{
+      title,
+      author,
+      url,
+      username
+    });
+     // generate markup for the new story
+     const $li = $(`
+     <li id="${storyObject.storyId}" class="id-${storyObject.storyId}">
+       <span class="star">
+         <i class="far fa-star"></i>
+       </span>
+       <a class="article-link" href="${url}" target="a_blank">
+         <strong>${title}</strong>
+       </a>
+       <small class="article-hostname ${hostName}">(${hostName})</small>
+       <small class="article-author">by ${author}</small>
+       <small class="article-username">posted by ${username}</small>
+     </li>
+   `);
+   $allStoriesList.prepend($li);
+
+   // hide the form and reset it
+   $submitForm.slideUp("slow");
+   $submitForm.trigger("reset");
+  });
+
+  /**
+   * Starring favorites event handler
+   *
+   */
+
+  $(".articles-container").on("click", ".star", async function(evt) {
+    if (currentUser) {
+      const $tgt = $(evt.target);
+      const $closestLi = $tgt.closest("li");
+      const storyId = $closestLi.attr("id");
+
+      // if the item is already favorited
+      if ($tgt.hasClass("fas")) {
+        // remove the favorite from the user's list
+        await currentUser.removeFavorite(storyId);
+        // then change the class to be an empty star
+        $tgt.closest("i").toggleClass("fas far");
+      } else {
+        // the item is un-favorited
+        await currentUser.addFavorite(storyId);
+        $tgt.closest("i").toggleClass("fas far");
+      }
+    }
+  });
+  
+
+
+
   /**
    * Event Handler for Clicking Login
    */
@@ -79,13 +150,60 @@ $(async function() {
     $allStoriesList.toggle();
   });
 
+// event handler for user profile.
+  $navUserProfile.on("click", function() {
+    // hide everything but user proile
+    hideElements();
+    $userProfile.show();
+  });
+
+  // event handler for nav submit
+  $navSubmit.on("click", function() {
+    if (currentUser) {
+      hideElements();
+      $allStoriesList.show();
+      $submitForm.slideToggle();
+    }
+  });
+
+// handler for navigation to favs.
+
+ $body.on("click", "#nav-favorites", function() {
+  hideElements();
+  if (currentUser) {
+    generateFaves();
+    $favoritedStories.show();
+  }
+ });
+
+
+
+
   /**
    * Event handler for Navigation to Homepage
    */
 
-  $("body").on("click", "#nav-all", async function() {
+  $body.on("click", "#nav-all", async function() {
     hideElements();
     await generateStories();
+    $allStoriesList.show();
+  });
+
+  // deleting a story
+
+  $ownStories.on("click", ".trash-can", async function(evt) {
+    evt.preventDefault();
+    const $closestLi = $(evt.target).closest("li");
+    const storyId = $closestLi.attr("id");
+
+    // remove the story from the API
+    await storyList.removeStory(currentUser, storyId);
+
+    // re generae the story list
+    await generateStories();
+
+    // hide everthing but tory list
+    hideElements();
     $allStoriesList.show();
   });
 
@@ -106,6 +224,7 @@ $(async function() {
     await generateStories();
 
     if (currentUser) {
+      generateProfile();
       showNavForLoggedInUser();
     }
   }
@@ -128,7 +247,28 @@ $(async function() {
 
     // update the navigation bar
     showNavForLoggedInUser();
+
+    generateProfile();
   }
+
+  /**
+   * Build a user profile based on the global "user" instance
+   */
+
+  function generateProfile() {
+    // show your name
+    $("#profile-name").text(`Name: ${currentUser.name}`);
+    // show your username
+    $("#profile-username").text(`Username: ${currentUser.username}`);
+    // format and display the account creation date
+    $("#profile-account-date").text(
+      `Account Created: ${currentUser.createdAt.slice(0, 10)}`
+    );
+    // set the navigation to list the username
+    $navUserProfile.text(`${currentUser.username}`);
+  }
+
+
 
   /**
    * A rendering function to call the StoryList.getStories static method,
@@ -154,14 +294,26 @@ $(async function() {
    * A function to render HTML for an individual Story instance
    */
 
-  function generateStoryHTML(story) {
+  function generateStoryHTML(story, isOwnStory) {
     let hostName = getHostName(story.url);
+    let starType = isFavorite(story) ? "fas" : "far";
+
+    // render a trash can for deleting your own story
+    const trashCanIcon = isOwnStory
+      ? `<span class="trash-can">
+          <i class="fas fa-trash-alt"></i>
+        </span>`
+      : "";
 
     // render story markup
     const storyMarkup = $(`
-      <li id="${story.storyId}">
-        <a class="article-link" href="${story.url}" target="a_blank">
-          <strong>${story.title}</strong>
+       <li id="${story.storyId}">
+        ${trashCanIcon}
+     <span class="star">
+          <i class="${starType} fa-star"></i>
+     </span>
+      <a class="article-link" href="${story.url}" target="a_blank">
+      <strong>${story.title}</strong>
         </a>
         <small class="article-author">by ${story.author}</small>
         <small class="article-hostname ${hostName}">(${hostName})</small>
@@ -172,6 +324,40 @@ $(async function() {
     return storyMarkup;
   }
 
+  function generateFaves() {
+    // empty the list
+    $favoritedStories.empty();
+
+    // user has no favs
+    if (currentUser.favorites.length === 0) {
+      $favoritedStories.append("<h5>No favorites added!</h5>");
+      } else {
+        for (let story of currentUser.favorites) {
+        let favoriteHTML = generateStoryHTML(story, false, true);
+        $favoritedStories.append(favoriteHTML);
+      }
+  }
+}
+
+function generateMyStories() {
+  $ownStories.empty();
+
+  //user has no stories
+  if (currentUser.ownStories.length === 0) {
+    $ownStories.append("<h5>No stories added by user yet!</h5>");
+  } else {
+    // all of the user's stories
+    for (let story of currentUser.ownStories) {
+      // render each story in the list
+      let ownStoryHTML = generateStoryHTML(story, true);
+      $ownStories.append(ownStoryHTML);
+    }
+  }
+
+  $ownStories.show();
+}
+
+
   /* hide all elements in elementsArr */
 
   function hideElements() {
@@ -181,7 +367,10 @@ $(async function() {
       $filteredArticles,
       $ownStories,
       $loginForm,
-      $createAccountForm
+      $createAccountForm,
+      $userProfile,
+      $favoritedStories
+
     ];
     elementsArr.forEach($elem => $elem.hide());
   }
@@ -189,7 +378,19 @@ $(async function() {
   function showNavForLoggedInUser() {
     $navLogin.hide();
     $navLogOut.show();
+    $userProfile.hide();
+    $navWelcome.show();
+    $(".main-nav-links, #user-profile").toggleClass("hidden");
+
   }
+ // check if a story already in the user favs list.
+ function isFavorite(story) {
+  let favStoryIds = new Set();
+  if (currentUser) {
+    favStoryIds = new Set(currentUser.favorites.map(obj => obj.storyId));
+  }
+  return favStoryIds.has(story.storyId);
+}
 
   /* simple function to pull the hostname from a URL */
 
